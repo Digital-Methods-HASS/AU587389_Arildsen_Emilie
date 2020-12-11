@@ -1,0 +1,169 @@
+---
+title: "Council minutes 1918-1920"
+author: "Emilie Arildsen"
+date: "12/14/2020"
+output: html_document
+---
+
+# Downloading packages
+This project uses the following packages:
+
+```{r message=FALSE}
+library(tidyverse)
+library(tidytext)
+library(lubridate)
+```
+
+Documentation:
+*https://www.tidyverse.org/packages/
+*https://cran.r-project.org/web/packages/tidytext/vignettes/tidytext.html
+*https://lubridate.tidyverse.org/
+
+
+# Downloading data
+This project is based on data from the Github repository of Aarhus Stadsarkiv (Aarhus city archives)^[https://github.com/aarhusstadsarkiv/datasets/tree/master/minutes/city-council]. More specifically, this project employs the city council minutes 1915-1930.
+
+The dataset has the following structure^[https://github.com/aarhusstadsarkiv/datasets/blob/master/minutes/city-council/README.md]: 
+
+    “DESCRIPTION
+    The datasets consist of the transcribed and proof-read text from the annually printed minutes. Text from one specific agenda item on one specific page produces one row. If the same agenda item runs across several pages, it just produces several rows of text.
+
+    Each row has the following columns:
+
+    date_of_meeting
+    The date of the meeting (yyyy-mm-dd)
+
+    publication_page
+    The original pagenumber from the printed minutes
+
+    page_url
+    Link to a scanned copy of the printed page
+
+    record_ids
+    One or more record_ids that the current agenda item references. The ids are assigned by the City Council
+
+    text
+    The transcribed text”
+
+
+Firstly, I loaded the dataset into via a link to the dataset from Aarhus Stadsarkivs githup repository:
+
+```{r}
+cm_1915_30 <- read_csv("https://raw.githubusercontent.com/aarhusstadsarkiv/datasets/master/minutes/city-council/city-council-minutes-1915-1930.csv")
+```
+
+# Data cleaning 
+
+Subsequently, the data needed to be cleaned. I was looking for words related to the Spanish Flu and chose the following words: den spanske syge, smitte, sygepavillon, epidemi, hjemmesygepleje. In order to search for them all as one unit, I needed to transform them.
+
+Firstly, the phrase "den spanske syge" was transformed to "den_spanske_syge" using mutate with the function str_replace. Thereby, the phrase was now perceived as one word. 
+
+Next, I used the same functions to replace the words related to the Spanish Flu with the phrase "sygdoms_ord". I combined this with the regular expression [a-zæøå]* which captured every morphological structure of the words, including compound words which are very common in Danish. Furthemore, I replaced both the capitalised and non-capitalised words in order to capture them all. Lastly, I needed to target the instances where the word related to the Spanish Flu appeared as the last element in a compound word. Here I employed the regular expression [A-ZÆØÅ][a-zæøå]* in front of sygdoms_ord in order to transform it as needed.
+
+After having transformed the search word, I wanted to extract the year and insert it as an independent variable in the dataframe Then, I filtered the dataframe to include the values from year 1918-1920.
+
+```{r}
+cm_1915_30 %>% 
+  mutate(text = str_replace_all(text, "den spanske Syge", "den_spanske_syge")) %>% 
+  mutate(text = str_replace_all(text, "smitte[a-zæøå]*", "sygdoms_ord")) %>% 
+  mutate(text = str_replace_all(text, "Smitte[a-zæøå]*", "sygdoms_ord")) %>% 
+  mutate(text = str_replace_all(text, "sygepavillon[a-zæøå]*", "sygdoms_ord")) %>% 
+  mutate(text = str_replace_all(text, "Sygepavillon[a-zæøå]*", "sygdoms_ord")) %>% 
+  mutate(text = str_replace_all(text, "den_spanske_syge[a-zæøå]*", "sygdoms_ord")) %>% 
+  mutate(text = str_replace_all(text, "Den_spanske_syge[a-zæøå]*", "sygdoms_ord")) %>% 
+  mutate(text = str_replace_all(text, "epidemi[a-zæøå]*", "sygdoms_ord")) %>% 
+  mutate(text = str_replace_all(text, "Epidemi[a-zæøå]*", "sygdoms_ord")) %>% 
+  mutate(text = str_replace_all(text, "Hjemmesygepleje[a-zæøå]*", "sygdoms_ord")) %>% 
+  mutate(text = str_replace_all(text, "hjemmesygepleje[a-zæøå]*", "sygdoms_ord")) %>% 
+  mutate(text = str_replace_all(text, "[A-ZÆØÅ][a-zæøå]*sygdoms_ord", "sygdoms_ord")) %>% 
+  mutate(year = year(date_of_meeting)) %>% 
+  select(year, everything()) %>% 
+  filter(!(year < 1918 | year > 1920)) -> cm_1918_20
+```
+
+
+# Introduction til tidy text mining 
+
+The data processing of this project will employ tidy text mining, which are included in the tidytext-package^[https://www.tidytextmining.com]. The function unnest_tokens takes a given text and splits it into one word per row in the dataset. 
+
+
+### Converting data text to tidy text format
+
+```{r}
+cm_1918_20_tidy <- cm_1918_20 %>% 
+  unnest_tokens(word, text)
+```
+
+
+# Implementing stop word list
+In order to elimate many functions words of the text, I employed a Danish stop word list. I used the one from created by Max Odsbjerg Pedersen for his project "dkpol daily compared"^[http://hax.odsbjerg.dk/dkpol_daily_comparing_tf_idf.html]. By doing this, the frequency of the words related to the Spanish Flu should appear more accurately. 
+
+```{r}
+stopord <- read_csv("https://gist.githubusercontent.com/maxodsbjerg/f2271ec1a1d76af4b91eaa78cf6f2016/raw/4d1fb3287abbce75d7b18d8147090c952e1652ff/stopord.txt")
+```
+
+```{r}
+cm_1918_20_tidy <- anti_join(cm_1918_20_tidy, stopord, by = "word")
+```
+
+# Counting words related to the Spanish Flu
+
+The number of instances per year of the words related to the Spanish Flu are shown below:
+
+```{r}
+cm_1918_20_tidy %>% 
+  filter(str_detect(word, "sygdoms_ord")) %>%
+  count(year, word, sort = TRUE)
+```
+
+
+# Creating visualization of the frequency of words related to the Spanish Flu
+
+## Calculating the total number of words in each year
+
+In order to calculate the frequency of the words related to the Spanish Flu, the total number words per year needed to be added to the data frame:
+
+```{r}
+total_words <- cm_1918_20_tidy %>% 
+  count(year, word, sort = TRUE) %>% 
+  
+  group_by(year) %>% 
+  summarise(total = sum(n))
+```
+
+```{r}
+cm_1918_20_tidy %>% 
+  count(year, word, sort = TRUE) %>% 
+  left_join(total_words, by = "year") -> cm_1918_20_tidy
+```
+
+
+## Frequency 
+
+Subsequently, the frequency can be calculated by using the function bind_tf_idf
+
+
+```{r}
+cm_1918_20_tidy %>% 
+  bind_tf_idf(word, year, n) -> cm_1918_20_tf_idf
+```
+
+## Visualization
+
+Ultimately, a bar chart displaying the frequency per year of the words related to the Spanish Flu was plotted:
+
+```{r}
+options(scipen = 999)
+```
+
+```{r}
+cm_1918_20_tf_idf %>% 
+  filter(word == "sygdoms_ord") %>% 
+  ggplot() + 
+  geom_col(mapping = aes(x = year, y = tf))
+```
+
+# Acknowledgements
+
+This project was greatly inspired by the work Max Odsbjerg Pedersen has done in the projects "dkpol daily compared"^[http://hax.odsbjerg.dk/dkpol_daily_comparing_tf_idf.html] and "Aarhus Byraads forhandlingsprotokoller 1930-1940 term frequency(tf) – inverse document frequency(idf)"^[https://kulturarvscluster.kb.dk/arkiver/109]. Furthermore, he has provided substantial help and advice.
+
